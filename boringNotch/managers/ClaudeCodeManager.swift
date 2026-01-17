@@ -28,6 +28,9 @@ final class ClaudeCodeManager: ObservableObject {
     @Published private(set) var state: ClaudeCodeState = ClaudeCodeState()
     @Published private(set) var dailyStats: DailyStats = DailyStats()
 
+    /// All active conversations within the selected session's project
+    @Published private(set) var conversations: [ConversationInfo] = []
+
     // MARK: - Multi-Session Permission Tracking
 
     /// Per-session state tracking for permission detection
@@ -124,6 +127,15 @@ final class ClaudeCodeManager: ObservableObject {
 
     /// Sessions that failed to start watching (no log file yet)
     private var failedSessionIds: Set<String> = []
+
+    // MARK: - Sticky Session Tracking (for terminal sessions)
+
+    /// Track discovered terminal session project keys to keep them visible even when JSONL is stale
+    /// Once a terminal session is discovered, it stays visible until the process is truly gone
+    private var knownTerminalProjectKeys: Set<String> = []
+
+    /// Extended timeout for known sessions before removing them (1 hour)
+    private let knownSessionTimeout: TimeInterval = 60 * 60
     /// Timestamps of when sessions failed - retry after interval
     private var failedSessionTimestamps: [String: Date] = [:]
     /// Retry interval for failed sessions (seconds)
@@ -226,6 +238,10 @@ final class ClaudeCodeManager: ObservableObject {
 
     /// Scan for terminal sessions by looking for recently modified JSONL files
     /// that don't correspond to any IDE session
+    ///
+    /// Implements "sticky sessions": once a terminal session is discovered, it stays visible
+    /// until the JSONL file is very stale (1 hour) or deleted. This prevents sessions from
+    /// flickering out of the UI during periods of inactivity while Claude is still running.
     private func scanForTerminalSessions(excludingIDEWorkspaces ideWorkspaces: [String]) -> [ClaudeSession] {
         let fm = FileManager.default
         var terminalSessions: [ClaudeSession] = []
@@ -238,14 +254,19 @@ final class ClaudeCodeManager: ObservableObject {
         })
 
         guard fm.fileExists(atPath: projectsDir.path) else {
+            knownTerminalProjectKeys.removeAll()
             return []
         }
 
         do {
             let projectDirs = try fm.contentsOfDirectory(at: projectsDir, includingPropertiesForKeys: [.contentModificationDateKey])
 
-            // Time threshold: only consider projects with activity in last 5 minutes
-            let recentThreshold = Date().addingTimeInterval(-5 * 60)
+            // Time thresholds
+            let recentThreshold = Date().addingTimeInterval(-5 * 60)  // 5 min for new discovery
+            let staleThreshold = Date().addingTimeInterval(-knownSessionTimeout)  // 1 hour for known sessions
+
+            // Track which project keys we see in this scan (for cleanup)
+            var seenProjectKeys: Set<String> = []
 
             for projectDir in projectDirs {
                 // Skip if this is an IDE session
@@ -259,15 +280,48 @@ final class ClaudeCodeManager: ObservableObject {
                     continue
                 }
 
-                // Check for recent JSONL file activity in this project
+                seenProjectKeys.insert(projectKey)
+
+                // Check for JSONL file in this project
                 guard let mostRecentFile = findMostRecentJSONLFile(in: projectDir) else {
+                    // No JSONL file - remove from known set if it was there
+                    knownTerminalProjectKeys.remove(projectKey)
                     continue
                 }
 
                 // Get modification date
                 guard let attrs = try? fm.attributesOfItem(atPath: mostRecentFile.path),
-                      let modDate = attrs[.modificationDate] as? Date,
-                      modDate > recentThreshold else {
+                      let modDate = attrs[.modificationDate] as? Date else {
+                    knownTerminalProjectKeys.remove(projectKey)
+                    continue
+                }
+
+                // Sticky session logic:
+                // 1. If JSONL is recent (5 min) → include and add to known set
+                // 2. Else if project key is known AND not too stale (1 hour) → include (sticky)
+                // 3. Else → skip and remove from known set
+
+                let isRecent = modDate > recentThreshold
+                let isKnown = knownTerminalProjectKeys.contains(projectKey)
+                let isNotTooStale = modDate > staleThreshold
+
+                if isRecent {
+                    // Recently active - include and track
+                    let wasKnown = knownTerminalProjectKeys.contains(projectKey)
+                    knownTerminalProjectKeys.insert(projectKey)
+                    if !wasKnown {
+                        print("[ClaudeCode] 📌 New terminal session discovered: \(projectKey)")
+                    }
+                } else if isKnown && isNotTooStale {
+                    // Known session that's not too stale - keep it visible (sticky behavior)
+                    // This is the key change: we don't filter it out just because it's > 5 min old
+                    // Note: Not logging here to avoid spam - session stays visible silently
+                } else {
+                    // Unknown and not recent, or too stale - skip
+                    if isKnown {
+                        print("[ClaudeCode] 🗑️ Removing stale session (>1h idle): \(projectKey)")
+                    }
+                    knownTerminalProjectKeys.remove(projectKey)
                     continue
                 }
 
@@ -281,6 +335,10 @@ final class ClaudeCodeManager: ObservableObject {
                 let session = ClaudeSession.terminalSession(projectKey: projectKey, workspacePath: workspacePath)
                 terminalSessions.append(session)
             }
+
+            // Clean up project keys for directories that no longer exist
+            knownTerminalProjectKeys = knownTerminalProjectKeys.intersection(seenProjectKeys)
+
         } catch {
             print("[ClaudeCode] Error scanning terminal sessions: \(error)")
         }
@@ -312,6 +370,221 @@ final class ClaudeCodeManager: ObservableObject {
         return mostRecent?.url
     }
 
+    /// Find all active JSONL files in a project directory (modified within threshold)
+    /// Returns conversations sorted by last modified (most recent first)
+    private func findActiveJSONLFiles(in projectDir: URL, activeThreshold: TimeInterval = 10 * 60) -> [ConversationInfo] {
+        let fm = FileManager.default
+
+        guard let files = try? fm.contentsOfDirectory(at: projectDir, includingPropertiesForKeys: [.contentModificationDateKey]) else {
+            return []
+        }
+
+        let jsonlFiles = files.filter { $0.pathExtension == "jsonl" }
+        let now = Date()
+        let recentThreshold = now.addingTimeInterval(-activeThreshold)
+
+        var conversations: [ConversationInfo] = []
+
+        for file in jsonlFiles {
+            guard let attrs = try? fm.attributesOfItem(atPath: file.path),
+                  let modDate = attrs[.modificationDate] as? Date else {
+                continue
+            }
+
+            // Extract UUID from filename (e.g., "26cabc84-fdfa-437a-b90e-023875cffada.jsonl")
+            let uuid = file.deletingPathExtension().lastPathComponent
+
+            // Read token usage and current tool from the file (quick scan of last portion)
+            let (tokenUsage, currentTool) = readTokenUsageAndToolFromJSONL(file)
+
+            // Read title from the file (first user message)
+            let title = readTitleFromJSONL(file)
+
+            let isActive = modDate > recentThreshold
+
+            // Detect "waiting for permission": pending tool but file not modified in last 3 seconds
+            let waitingThreshold = Date().addingTimeInterval(-3)
+            let isWaitingForPermission = currentTool != nil && modDate < waitingThreshold
+
+            var conversation = ConversationInfo(
+                id: uuid,
+                jsonlPath: file,
+                lastModified: modDate,
+                tokenUsage: tokenUsage,
+                isActive: isActive,
+                title: title,
+                currentTool: isWaitingForPermission ? nil : currentTool  // Clear tool if waiting
+            )
+            conversation.isWaitingForPermission = isWaitingForPermission
+
+            conversations.append(conversation)
+        }
+
+        // Sort by last modified (most recent first)
+        conversations.sort { $0.lastModified > $1.lastModified }
+
+        return conversations
+    }
+
+    /// Read token usage and current tool from the last portion of a JSONL file
+    /// Returns tuple of (TokenUsage, currentToolName?)
+    private func readTokenUsageAndToolFromJSONL(_ file: URL) -> (TokenUsage, String?) {
+        var usage = TokenUsage()
+        var currentTool: String? = nil
+        var foundUsage = false
+
+        guard let handle = try? FileHandle(forReadingFrom: file) else {
+            return (usage, nil)
+        }
+        defer { try? handle.close() }
+
+        // Read last 20KB of file to find most recent usage and tool state
+        let readSize: UInt64 = 20_000
+        let fileSize = (try? handle.seekToEnd()) ?? 0
+
+        if fileSize > readSize {
+            try? handle.seek(toOffset: fileSize - readSize)
+        } else {
+            try? handle.seek(toOffset: 0)
+        }
+
+        guard let data = try? handle.readToEnd(),
+              let content = String(data: data, encoding: .utf8) else {
+            return (usage, nil)
+        }
+
+        // Track tool_use IDs and their results to find active tools
+        var pendingToolUses: [String: String] = [:]  // id -> tool name
+        var lastStartedTool: String? = nil  // Track most recently started tool
+
+        // Parse lines (forward order to track tool state properly)
+        let lines = content.components(separatedBy: .newlines)
+        for line in lines {
+            guard !line.isEmpty,
+                  let jsonData = line.data(using: .utf8),
+                  let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] else {
+                continue
+            }
+
+            // Look for message.usage field
+            if !foundUsage,
+               let message = json["message"] as? [String: Any],
+               let usageDict = message["usage"] as? [String: Any] {
+                usage.inputTokens = usageDict["input_tokens"] as? Int ?? 0
+                usage.outputTokens = usageDict["output_tokens"] as? Int ?? 0
+                usage.cacheReadInputTokens = usageDict["cache_read_input_tokens"] as? Int ?? 0
+                usage.cacheCreationInputTokens = usageDict["cache_creation_input_tokens"] as? Int ?? 0
+                foundUsage = true
+            }
+
+            // Track tool_use (tool started)
+            if let message = json["message"] as? [String: Any],
+               let content = message["content"] as? [[String: Any]] {
+                for block in content {
+                    if let type = block["type"] as? String, type == "tool_use",
+                       let toolId = block["id"] as? String,
+                       let toolName = block["name"] as? String {
+                        pendingToolUses[toolId] = toolName
+                        lastStartedTool = toolName
+                    }
+                }
+            }
+
+            // Track tool_result (tool completed)
+            if let type = json["type"] as? String, type == "tool_result",
+               let toolUseId = json["tool_use_id"] as? String {
+                pendingToolUses.removeValue(forKey: toolUseId)
+            }
+        }
+
+        // If there are pending tool uses (started but not completed), return the last one
+        if !pendingToolUses.isEmpty, let tool = lastStartedTool, pendingToolUses.values.contains(tool) {
+            currentTool = tool
+        } else if !pendingToolUses.isEmpty {
+            // Fallback: get any pending tool
+            currentTool = pendingToolUses.values.first
+        }
+
+        return (usage, currentTool)
+    }
+
+    /// Read the title from a JSONL file
+    /// Priority: 1) Last summary entry, 2) First user message, 3) nil
+    private func readTitleFromJSONL(_ file: URL) -> String? {
+        guard let handle = try? FileHandle(forReadingFrom: file) else {
+            return nil
+        }
+        defer { try? handle.close() }
+
+        // First, check the end of file for summary entries (tab names)
+        let fileSize = (try? handle.seekToEnd()) ?? 0
+        let tailReadSize: UInt64 = 20_000
+
+        if fileSize > tailReadSize {
+            try? handle.seek(toOffset: fileSize - tailReadSize)
+        } else {
+            try? handle.seek(toOffset: 0)
+        }
+
+        if let data = try? handle.readToEnd(),
+           let content = String(data: data, encoding: .utf8) {
+            // Look for the last summary entry (most recent tab name)
+            let lines = content.components(separatedBy: .newlines).reversed()
+            for line in lines {
+                guard !line.isEmpty,
+                      let jsonData = line.data(using: .utf8),
+                      let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
+                      let type = json["type"] as? String, type == "summary",
+                      let summary = json["summary"] as? String else {
+                    continue
+                }
+                return summary
+            }
+        }
+
+        // Fallback: read first user message from beginning
+        try? handle.seek(toOffset: 0)
+        let headReadSize = 10_000
+        guard let data = try? handle.read(upToCount: headReadSize),
+              let content = String(data: data, encoding: .utf8) else {
+            return nil
+        }
+
+        let lines = content.components(separatedBy: .newlines)
+        for line in lines {
+            guard !line.isEmpty,
+                  let jsonData = line.data(using: .utf8),
+                  let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
+                  let type = json["type"] as? String, type == "user",
+                  let message = json["message"] as? [String: Any],
+                  let content = message["content"] as? String else {
+                continue
+            }
+            let firstLine = content.components(separatedBy: .newlines).first ?? content
+            return firstLine.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        return nil
+    }
+
+    /// Scan and update conversations for the selected session
+    func scanConversations() {
+        guard let session = selectedSession,
+              let projectKey = session.projectKey else {
+            conversations = []
+            return
+        }
+
+        let projectDir = projectsDir.appendingPathComponent(projectKey)
+        let activeConversations = findActiveJSONLFiles(in: projectDir, activeThreshold: 10 * 60)  // 10 min threshold
+
+        // Only update if changed to avoid unnecessary UI updates
+        if activeConversations.map({ $0.id }) != conversations.map({ $0.id }) {
+            print("[ClaudeCode] Found \(activeConversations.count) active conversations for \(session.displayName)")
+        }
+        conversations = activeConversations
+    }
+
     /// Select a session to monitor
     func selectSession(_ session: ClaudeSession) {
         guard session != selectedSession else { return }
@@ -322,6 +595,7 @@ final class ClaudeCodeManager: ObservableObject {
         state.cwd = session.workspaceFolders.first ?? ""
 
         startWatchingSessionFile()
+        scanConversations()  // Scan for all conversations in this project
     }
 
     /// Manually refresh state
@@ -329,6 +603,7 @@ final class ClaudeCodeManager: ObservableObject {
         scanForSessions()
         if selectedSession != nil {
             readNewSessionData()
+            scanConversations()
         }
     }
 
@@ -342,6 +617,7 @@ final class ClaudeCodeManager: ObservableObject {
         sessionScanTimer = Timer.scheduledTimer(withTimeInterval: 10.0, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.scanForSessions()
+                self?.scanConversations()
                 self?.loadDailyStats()
             }
         }
