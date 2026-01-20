@@ -97,6 +97,62 @@ struct ClaudeSessionLockFile: Codable {
     }
 }
 
+// MARK: - Conversation Info
+
+/// Represents an individual conversation/tab within a project session
+struct ConversationInfo: Identifiable, Equatable {
+    let id: String  // UUID from JSONL filename
+    let jsonlPath: URL
+    let lastModified: Date
+    var tokenUsage: TokenUsage
+    var isActive: Bool  // Recently modified (within last 5 min)
+    var title: String?  // First user message or conversation summary
+    var currentTool: String?  // Currently running tool (if any)
+    var isWaitingForPermission: Bool = false  // Waiting for user approval
+
+    /// Short display ID (first 4 chars of UUID)
+    var shortId: String {
+        String(id.prefix(4))
+    }
+
+    /// Display title (truncated first message or short ID)
+    var displayTitle: String {
+        if let title = title, !title.isEmpty {
+            let cleaned = title.trimmingCharacters(in: .whitespacesAndNewlines)
+            if cleaned.count > 20 {
+                return String(cleaned.prefix(20)) + "…"
+            }
+            return cleaned
+        }
+        return shortId
+    }
+
+    /// Short tool name for display
+    var toolAbbreviation: String? {
+        guard let tool = currentTool else { return nil }
+        // Short readable abbreviations
+        switch tool {
+        case "Read": return "Rd"
+        case "Write": return "Wr"
+        case "Edit": return "Ed"
+        case "Bash": return "Run"
+        case "Glob": return "Find"    // File search
+        case "Grep": return "Srch"    // Text search
+        case "Task": return "Agent"
+        case "WebFetch": return "Web"
+        case "WebSearch": return "Web"
+        case "TodoWrite": return "Todo"
+        case "NotebookEdit": return "Note"
+        default: return String(tool.prefix(4))
+        }
+    }
+
+    /// Context percentage for this conversation
+    var contextPercentage: Double {
+        tokenUsage.contextPercentage
+    }
+}
+
 // MARK: - Token Usage
 
 /// Token usage data from JSONL message.usage field

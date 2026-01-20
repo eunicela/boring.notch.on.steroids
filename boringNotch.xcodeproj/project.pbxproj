@@ -150,6 +150,12 @@
 		BBB411382F0817830007988A /* ToolActivityIndicator.swift in Sources */ = {isa = PBXBuildFile; fileRef = BBB411332F0817830007988A /* ToolActivityIndicator.swift */; };
 		BBB411392F0817830007988A /* ClaudeCodeCompactView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BBB4112F2F0817830007988A /* ClaudeCodeCompactView.swift */; };
 		BBB4113B2F0870E30007988A /* SessionDotsIndicator.swift in Sources */ = {isa = PBXBuildFile; fileRef = BBB4113A2F0870E30007988A /* SessionDotsIndicator.swift */; };
+		CC0001072F100020007988CC /* PixelArtHelpers.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC0001022F10001B007988CC /* PixelArtHelpers.swift */; };
+		CC0001082F100021007988CC /* ClaudePixelCharacter.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC0001032F10001C007988CC /* ClaudePixelCharacter.swift */; };
+		CC0001092F100022007988CC /* TamagotchiScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC0001042F10001D007988CC /* TamagotchiScreen.swift */; };
+		CC00010A2F100023007988CC /* TamagotchiStatsPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC0001052F10001E007988CC /* TamagotchiStatsPanel.swift */; };
+		CC00010B2F100024007988CC /* ClaudeTamagotchiView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC0001062F10001F007988CC /* ClaudeTamagotchiView.swift */; };
+		CC00010C2F100025007988CC /* PlasticFrameView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC00010D2F100025007988CC /* PlasticFrameView.swift */; };
 		F38DE6482D8243E7008B5C6D /* BatteryActivityManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F38DE6472D8243E2008B5C6D /* BatteryActivityManager.swift */; };
 /* End PBXBuildFile section */
 
@@ -324,6 +330,12 @@
 		BBB411322F0817830007988A /* SessionPicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionPicker.swift; sourceTree = "<group>"; };
 		BBB411332F0817830007988A /* ToolActivityIndicator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolActivityIndicator.swift; sourceTree = "<group>"; };
 		BBB4113A2F0870E30007988A /* SessionDotsIndicator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionDotsIndicator.swift; sourceTree = "<group>"; };
+		CC0001022F10001B007988CC /* PixelArtHelpers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PixelArtHelpers.swift; sourceTree = "<group>"; };
+		CC0001032F10001C007988CC /* ClaudePixelCharacter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudePixelCharacter.swift; sourceTree = "<group>"; };
+		CC0001042F10001D007988CC /* TamagotchiScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TamagotchiScreen.swift; sourceTree = "<group>"; };
+		CC0001052F10001E007988CC /* TamagotchiStatsPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TamagotchiStatsPanel.swift; sourceTree = "<group>"; };
+		CC0001062F10001F007988CC /* ClaudeTamagotchiView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeTamagotchiView.swift; sourceTree = "<group>"; };
+		CC00010D2F100025007988CC /* PlasticFrameView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlasticFrameView.swift; sourceTree = "<group>"; };
 		F38DE6472D8243E2008B5C6D /* BatteryActivityManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BatteryActivityManager.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -779,6 +791,7 @@
 		BBB411342F0817830007988A /* ClaudeCode */ = {
 			isa = PBXGroup;
 			children = (
+				CC0001012F10001A007988CC /* Tamagotchi */,
 				BBB4113A2F0870E30007988A /* SessionDotsIndicator.swift */,
 				BBB4112F2F0817830007988A /* ClaudeCodeCompactView.swift */,
 				BBB411302F0817830007988A /* ClaudeCodeStatsView.swift */,
@@ -787,6 +800,19 @@
 				BBB411332F0817830007988A /* ToolActivityIndicator.swift */,
 			);
 			path = ClaudeCode;
+			sourceTree = "<group>";
+		};
+		CC0001012F10001A007988CC /* Tamagotchi */ = {
+			isa = PBXGroup;
+			children = (
+				CC0001062F10001F007988CC /* ClaudeTamagotchiView.swift */,
+				CC0001042F10001D007988CC /* TamagotchiScreen.swift */,
+				CC0001032F10001C007988CC /* ClaudePixelCharacter.swift */,
+				CC0001052F10001E007988CC /* TamagotchiStatsPanel.swift */,
+				CC0001022F10001B007988CC /* PixelArtHelpers.swift */,
+				CC00010D2F100025007988CC /* PlasticFrameView.swift */,
+			);
+			path = Tamagotchi;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -1008,6 +1034,12 @@
 				BBB411372F0817830007988A /* SessionPicker.swift in Sources */,
 				BBB411382F0817830007988A /* ToolActivityIndicator.swift in Sources */,
 				BBB411392F0817830007988A /* ClaudeCodeCompactView.swift in Sources */,
+				CC0001072F100020007988CC /* PixelArtHelpers.swift in Sources */,
+				CC0001082F100021007988CC /* ClaudePixelCharacter.swift in Sources */,
+				CC0001092F100022007988CC /* TamagotchiScreen.swift in Sources */,
+				CC00010A2F100023007988CC /* TamagotchiStatsPanel.swift in Sources */,
+				CC00010B2F100024007988CC /* ClaudeTamagotchiView.swift in Sources */,
+				CC00010C2F100025007988CC /* PlasticFrameView.swift in Sources */,
 				14D570BC2C5E98EB0011E668 /* generic.swift in Sources */,
 				118EBE272E92DE8400D54B5A /* NSMenu+AssociatedObject.swift in Sources */,
 				B1CE8CFE2C6F659400DD9871 /* KeyboardShortcutsHelper.swift in Sources */,

@@ -9,8 +9,97 @@ import SwiftUI
 
 struct ClaudeCodeStatsView: View {
     @ObservedObject var manager = ClaudeCodeManager.shared
+    @AppStorage("claudeCodeUseTamagotchiView") private var useTamagotchiView = true
 
     var body: some View {
+        if useTamagotchiView {
+            // Tamagotchi-style view with pixel art Claude
+            VStack(spacing: 0) {
+                // Header row with session picker and view toggle
+                HStack(spacing: 6) {
+                    SessionPicker(manager: manager)
+
+                    if manager.state.isConnected {
+                        Circle()
+                            .fill(Color.green)
+                            .frame(width: 5, height: 5)
+                    }
+
+                    Spacer()
+
+                    // Refresh button
+                    Button(action: { manager.scanForSessions() }) {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundColor(.white.opacity(0.8))
+                            .padding(4)
+                            .background(Color.white.opacity(0.15))
+                            .cornerRadius(4)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Refresh sessions")
+
+                    // Toggle to switch views
+                    Button(action: { useTamagotchiView.toggle() }) {
+                        Image(systemName: "list.bullet.rectangle")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundColor(.white.opacity(0.8))
+                            .padding(4)
+                            .background(Color.white.opacity(0.15))
+                            .cornerRadius(4)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Switch to classic view")
+                }
+                .padding(.horizontal, 10)
+                .padding(.top, 6)
+
+                if manager.state.isConnected {
+                    ClaudeTamagotchiView()
+                        .frame(maxHeight: 140)
+                } else {
+                    // Not connected state
+                    Spacer()
+                    notConnectedView
+                    Spacer()
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .top)
+        } else {
+            // Classic stats view
+            classicStatsView
+        }
+    }
+
+    // MARK: - Not Connected View
+
+    private var notConnectedView: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "terminal")
+                .font(.title3)
+                .foregroundColor(.secondary)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("No session selected")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+
+                if manager.availableSessions.isEmpty {
+                    Text("Start Claude Code to begin")
+                        .font(.caption2)
+                        .foregroundColor(.secondary.opacity(0.7))
+                } else {
+                    Text("\(manager.availableSessions.count) session\(manager.availableSessions.count == 1 ? "" : "s") available")
+                        .font(.caption2)
+                        .foregroundColor(.secondary.opacity(0.7))
+                }
+            }
+        }
+    }
+
+    // MARK: - Classic Stats View
+
+    private var classicStatsView: some View {
         VStack(alignment: .leading, spacing: 6) {
             // Row 1: Session picker + connection status + model/branch
             HStack(spacing: 6) {
@@ -40,6 +129,30 @@ struct ClaudeCodeStatsView: View {
                 }
 
                 Spacer()
+
+                // Refresh button
+                Button(action: { manager.scanForSessions() }) {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(.white.opacity(0.8))
+                        .padding(4)
+                        .background(Color.white.opacity(0.15))
+                        .cornerRadius(4)
+                }
+                .buttonStyle(.plain)
+                .help("Refresh sessions")
+
+                // Toggle to switch to Tamagotchi view
+                Button(action: { useTamagotchiView.toggle() }) {
+                    Image(systemName: "gamecontroller.fill")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(.white.opacity(0.8))
+                        .padding(4)
+                        .background(Color.white.opacity(0.15))
+                        .cornerRadius(4)
+                }
+                .buttonStyle(.plain)
+                .help("Switch to Tamagotchi view")
             }
 
             if manager.state.isConnected {
@@ -106,27 +219,7 @@ struct ClaudeCodeStatsView: View {
             } else {
                 // Not connected state - centered
                 Spacer()
-                HStack(spacing: 8) {
-                    Image(systemName: "terminal")
-                        .font(.title3)
-                        .foregroundColor(.secondary)
-
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("No session selected")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-
-                        if manager.availableSessions.isEmpty {
-                            Text("Start Claude Code to begin")
-                                .font(.caption2)
-                                .foregroundColor(.secondary.opacity(0.7))
-                        } else {
-                            Text("\(manager.availableSessions.count) session\(manager.availableSessions.count == 1 ? "" : "s") available")
-                                .font(.caption2)
-                                .foregroundColor(.secondary.opacity(0.7))
-                        }
-                    }
-                }
+                notConnectedView
                 Spacer()
             }
         }

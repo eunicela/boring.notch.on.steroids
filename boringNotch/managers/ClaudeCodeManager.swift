@@ -370,10 +370,34 @@ final class ClaudeCodeManager: ObservableObject {
         return mostRecent?.url
     }
 
+    /// Read valid session IDs from sessions-index.json
+    /// Returns an empty set if the index file doesn't exist or can't be read
+    private func readSessionIndex(in projectDir: URL) -> Set<String> {
+        let indexFile = projectDir.appendingPathComponent("sessions-index.json")
+
+        guard let data = try? Data(contentsOf: indexFile),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let entries = json["entries"] as? [[String: Any]] else {
+            return []
+        }
+
+        var sessionIds = Set<String>()
+        for entry in entries {
+            if let sessionId = entry["sessionId"] as? String {
+                sessionIds.insert(sessionId)
+            }
+        }
+        return sessionIds
+    }
+
     /// Find all active JSONL files in a project directory (modified within threshold)
     /// Returns conversations sorted by last modified (most recent first)
-    private func findActiveJSONLFiles(in projectDir: URL, activeThreshold: TimeInterval = 10 * 60) -> [ConversationInfo] {
+    /// Filters by sessions-index.json to only show conversations that Claude Code considers active
+    private func findActiveJSONLFiles(in projectDir: URL, activeThreshold: TimeInterval = 20 * 60) -> [ConversationInfo] {
         let fm = FileManager.default
+
+        // Get valid session IDs from sessions-index.json
+        let validSessionIds = readSessionIndex(in: projectDir)
 
         guard let files = try? fm.contentsOfDirectory(at: projectDir, includingPropertiesForKeys: [.contentModificationDateKey]) else {
             return []
@@ -394,6 +418,12 @@ final class ClaudeCodeManager: ObservableObject {
             // Extract UUID from filename (e.g., "26cabc84-fdfa-437a-b90e-023875cffada.jsonl")
             let uuid = file.deletingPathExtension().lastPathComponent
 
+            // Only include files that are in the sessions index (if index exists)
+            // Fallback: if index is empty (doesn't exist), show all files for terminal sessions
+            guard validSessionIds.isEmpty || validSessionIds.contains(uuid) else {
+                continue
+            }
+
             // Read token usage and current tool from the file (quick scan of last portion)
             let (tokenUsage, currentTool) = readTokenUsageAndToolFromJSONL(file)
 
@@ -401,6 +431,9 @@ final class ClaudeCodeManager: ObservableObject {
             let title = readTitleFromJSONL(file)
 
             let isActive = modDate > recentThreshold
+
+            // Skip conversations that haven't been modified within the threshold
+            guard isActive else { continue }
 
             // Detect "waiting for permission": pending tool but file not modified in last 3 seconds
             let waitingThreshold = Date().addingTimeInterval(-3)
@@ -576,7 +609,7 @@ final class ClaudeCodeManager: ObservableObject {
         }
 
         let projectDir = projectsDir.appendingPathComponent(projectKey)
-        let activeConversations = findActiveJSONLFiles(in: projectDir, activeThreshold: 10 * 60)  // 10 min threshold
+        let activeConversations = findActiveJSONLFiles(in: projectDir, activeThreshold: 20 * 60)  // 20 min threshold
 
         // Only update if changed to avoid unnecessary UI updates
         if activeConversations.map({ $0.id }) != conversations.map({ $0.id }) {
