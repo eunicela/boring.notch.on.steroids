@@ -1,11 +1,13 @@
 <h1 align="center">
   <br>
-  Claude Tamagotchi
+  <a href="http://thebored.name"><img src="https://framerusercontent.com/images/RFK4vs0kn8pRMuOO58JeyoemXA.png?scale-down-to=256" alt="Boring Notch" width="150"></a>
+  <br>
+  boring.notch (Claude Code Fork)
   <br>
 </h1>
 
 <p align="center">
-  <strong>A Tamagotchi-style companion for Claude Code in your MacBook's notch</strong>
+  <strong>A fork with Tamagotchi-style Claude Code integration</strong>
 </p>
 
 <p align="center">
@@ -17,7 +19,7 @@
 
 ## About
 
-**Claude Tamagotchi** is a fork of [boring.notch](https://github.com/TheBoredTeam/boring.notch) that adds a Tamagotchi-style Claude Code integration to your MacBook's notch.
+This is a fork of [boring.notch](https://github.com/TheBoredTeam/boring.notch) that adds **Claude Code integration** with a Tamagotchi-style companion in your MacBook's notch.
 
 Watch your pixel-art Claude companion react to your coding sessions:
 - **Sleeping** when idle
@@ -64,26 +66,37 @@ All original boring.notch features (music controls, calendar, shelf, HUD replace
 
 ## Usage
 
-1. Launch the app - your notch now shows the Claude Tamagotchi
+1. Launch the app - your notch now includes the Claude Code tab
 2. Start a Claude Code session in your terminal or IDE
 3. Watch your pixel Claude react to your coding session!
 4. Click the session dots to focus different Claude Code windows
 
 ---
 
+## Upstream
+
+This fork tracks [TheBoredTeam/boring.notch](https://github.com/TheBoredTeam/boring.notch).
+
+To merge upstream changes:
+```bash
+git remote add upstream https://github.com/TheBoredTeam/boring.notch.git
+git fetch upstream
+git merge upstream/main
+```
+
+---
+
 ## Attribution
 
-This project is a fork of **[boring.notch](https://github.com/TheBoredTeam/boring.notch)** by [The Bored Team](https://github.com/TheBoredTeam).
-
-### Original Project Credits
-- **[boring.notch](https://github.com/TheBoredTeam/boring.notch)** - The original notch enhancement app
+### Original Project
+- **[boring.notch](https://github.com/TheBoredTeam/boring.notch)** by [The Bored Team](https://github.com/TheBoredTeam)
 - **[MediaRemoteAdapter](https://github.com/ungive/mediaremote-adapter)** - Now Playing integration
 - **[NotchDrop](https://github.com/Lakr233/NotchDrop)** - Shelf feature inspiration
-- Icon credits: [@maxtron95](https://github.com/maxtron95)
-- Website credits: [@himanshhhhuv](https://github.com/himanshhhhuv)
+- Icon: [@maxtron95](https://github.com/maxtron95)
+- Website: [@himanshhhhuv](https://github.com/himanshhhhuv)
 
 ### Fork Additions
-Claude Code integration and Tamagotchi features developed with assistance from Claude.
+Claude Code integration developed with assistance from Claude.
 
 ---
 
