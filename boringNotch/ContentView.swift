@@ -87,6 +87,15 @@ struct ContentView: View {
         return chinWidth
     }
 
+    /// Celebration overlay for Tamagotchi peek-a-boo animation (extracted to help type-checker)
+    /// Shows regardless of notch state so character can pop from closed notch
+    @ViewBuilder
+    private var celebrationOverlay: some View {
+        if Defaults[.enableClaudeCode] && coordinator.currentView == .claudeCode {
+            CelebrationOverlayView()
+        }
+    }
+
     var body: some View {
         // Calculate scale based on gesture progress only
         let gestureScale: CGFloat = {
@@ -206,6 +215,11 @@ struct ContentView: View {
                         .frame(width: computedChinWidth, height: vm.chinHeight)
                 }
             }
+        }
+        // Celebration overlay placed outside ZStack so it's not clipped
+        // Uses overlay so it can extend below the closed notch
+        .overlay(alignment: .top) {
+            celebrationOverlay
         }
         .padding(.bottom, 8)
         .frame(maxWidth: windowSize.width, maxHeight: windowSize.height, alignment: .top)

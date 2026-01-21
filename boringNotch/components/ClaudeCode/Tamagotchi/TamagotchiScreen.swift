@@ -28,22 +28,22 @@ struct TamagotchiScreen: View {
                 .fill(ClaudePixelPalette.screenInnerBorder)
                 .frame(width: size.width + 6, height: size.height + 6)
 
-            // LCD screen background
+            // LCD screen background (clipped - just the background and scanlines)
             ZStack {
                 // Base screen color with LCD tint
                 Rectangle()
                     .fill(screenBackgroundColor)
                     .frame(width: size.width, height: size.height)
 
-                // Character
-                ClaudePixelCharacter(mood: mood, scale: characterScale)
-
                 // Scanline overlay for authenticity
                 ScanlineOverlay(lineSpacing: 2, opacity: 0.05)
                     .frame(width: size.width, height: size.height)
-                    .clipShape(Rectangle())
             }
             .clipShape(Rectangle())
+
+            // Character - outside clip so it can pop out during celebration!
+            ClaudePixelCharacter(mood: mood, scale: characterScale)
+                .zIndex(1)  // Ensure character renders above screen bezel
         }
     }
 

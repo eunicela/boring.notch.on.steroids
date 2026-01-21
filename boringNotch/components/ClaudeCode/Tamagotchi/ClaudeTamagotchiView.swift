@@ -10,8 +10,6 @@ import SwiftUI
 struct ClaudeTamagotchiView: View {
     @ObservedObject var manager = ClaudeCodeManager.shared
 
-    @State private var lastToolCompletionTime: Date?
-    @State private var isCelebrating = false
     @State private var idleTimer: Timer?
     @State private var isIdle = false
 
@@ -30,6 +28,7 @@ struct ClaudeTamagotchiView: View {
             HStack(spacing: 0) {
                 // Left: Tamagotchi screen with character
                 TamagotchiScreen(mood: currentMood, size: screenSize)
+                    .zIndex(10)  // Ensure character can pop out above frame
 
                 Spacer()
 
@@ -46,14 +45,8 @@ struct ClaudeTamagotchiView: View {
             .padding(.vertical, 6)
             .background(Color.black)  // Content background for contrast
         }
-        .onChange(of: manager.state.recentTools.first?.id) { oldValue, newValue in
-            // Detect tool completion for celebration
-            if oldValue != nil && newValue != nil && oldValue != newValue {
-                triggerCelebration()
-            }
-        }
-        .onChange(of: manager.state.isActive) { _, isActive in
-            if isActive {
+        .onChange(of: manager.state.status) { _, status in
+            if status == .working {
                 resetIdleTimer()
             }
         }
@@ -68,14 +61,13 @@ struct ClaudeTamagotchiView: View {
     // MARK: - Mood Calculation
 
     private var currentMood: ClaudeMood {
+        // Use the state machine status for cleaner state derivation
         ClaudeMood.from(
-            isActive: manager.state.isActive,
-            isThinking: manager.state.isThinking,
+            status: manager.state.status,
             hasActiveTools: manager.state.hasActiveTools,
-            needsPermission: manager.state.needsPermission,
-            contextPercentage: manager.state.tokenUsage.contextPercentage,
-            isIdle: isIdle && !manager.state.isActive,
-            isCelebrating: isCelebrating
+            contextPercentage: manager.state.contextPercentage,
+            isSleeping: isIdle && manager.state.status == .waitingForInput,
+            isCelebrating: manager.isCelebrating
         )
     }
 
@@ -103,20 +95,6 @@ struct ClaudeTamagotchiView: View {
         manager.selectSession(manager.availableSessions[index + 1])
     }
 
-    // MARK: - Celebration Animation
-
-    private func triggerCelebration() {
-        guard !isCelebrating else { return }
-
-        isCelebrating = true
-        lastToolCompletionTime = Date()
-
-        // End celebration after a brief moment
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-            isCelebrating = false
-        }
-    }
-
     // MARK: - Idle Tracking
 
     private func startIdleTracking() {
@@ -128,7 +106,7 @@ struct ClaudeTamagotchiView: View {
         idleTimer?.invalidate()
 
         idleTimer = Timer.scheduledTimer(withTimeInterval: idleThreshold, repeats: false) { _ in
-            if !manager.state.isActive {
+            if manager.state.status != .working {
                 withAnimation(.easeInOut(duration: 0.5)) {
                     isIdle = true
                 }
@@ -146,10 +124,10 @@ struct ClaudeTamagotchiViewCompact: View {
 
     var body: some View {
         TamagotchiScreenCompact(mood: currentMood)
-            .onChange(of: manager.state.isActive) { _, isActive in
-                if !isActive {
+            .onChange(of: manager.state.status) { _, status in
+                if status != .working {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 8.0) {
-                        if !manager.state.isActive {
+                        if manager.state.status != .working {
                             isIdle = true
                         }
                     }
@@ -160,13 +138,12 @@ struct ClaudeTamagotchiViewCompact: View {
     }
 
     private var currentMood: ClaudeMood {
+        // Use the state machine status for cleaner state derivation
         ClaudeMood.from(
-            isActive: manager.state.isActive,
-            isThinking: manager.state.isThinking,
+            status: manager.state.status,
             hasActiveTools: manager.state.hasActiveTools,
-            needsPermission: manager.state.needsPermission,
-            contextPercentage: manager.state.tokenUsage.contextPercentage,
-            isIdle: isIdle,
+            contextPercentage: manager.state.contextPercentage,
+            isSleeping: isIdle,
             isCelebrating: false
         )
     }

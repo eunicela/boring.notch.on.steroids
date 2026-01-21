@@ -153,6 +153,47 @@ struct ConversationInfo: Identifiable, Equatable {
     }
 }
 
+// MARK: - Session Status (State Machine)
+
+/// Core operational state of a Claude Code session
+/// Based on XState-style state machine from claude-code-ui
+enum SessionStatus: String, Equatable {
+    /// Claude is actively processing (generating response or executing tools)
+    case working
+
+    /// A tool is waiting for user permission approval
+    case waitingForApproval
+
+    /// Claude finished responding, waiting for user input
+    case waitingForInput
+
+    /// No activity for extended period (session may be abandoned)
+    case idle
+
+    /// Display name for UI
+    var displayName: String {
+        switch self {
+        case .working: return "Working"
+        case .waitingForApproval: return "Needs Approval"
+        case .waitingForInput: return "Ready"
+        case .idle: return "Idle"
+        }
+    }
+
+    /// Whether this status indicates active processing
+    var isActive: Bool {
+        switch self {
+        case .working, .waitingForApproval: return true
+        case .waitingForInput, .idle: return false
+        }
+    }
+
+    /// Whether this status requires user attention
+    var needsAttention: Bool {
+        self == .waitingForApproval
+    }
+}
+
 // MARK: - Token Usage
 
 /// Token usage data from JSONL message.usage field
@@ -297,6 +338,49 @@ struct ClaudeCodeState: Equatable {
 
     /// True when the session is actively processing (thinking or running tools)
     var isActive: Bool { isThinking || hasActiveTools }
+
+    // MARK: - State Machine Status
+
+    /// Derive the current session status from component states
+    /// This is the canonical state machine status
+    var status: SessionStatus {
+        // Priority order matters:
+        // 1. Needs permission takes precedence (user action required)
+        // 2. Working (actively processing)
+        // 3. Waiting for input (Claude finished, user's turn)
+        // 4. Idle (no recent activity)
+
+        if needsPermission {
+            return .waitingForApproval
+        }
+
+        if isThinking || hasActiveTools {
+            return .working
+        }
+
+        // If connected but not active, we're waiting for input
+        if isConnected {
+            return .waitingForInput
+        }
+
+        return .idle
+    }
+
+    /// Derive status with idle timeout consideration
+    /// - Parameter idleThreshold: Seconds since last update to consider idle
+    func status(idleThreshold: TimeInterval) -> SessionStatus {
+        // Check base status first
+        let baseStatus = status
+
+        // If waiting for input and no recent activity, consider idle
+        if baseStatus == .waitingForInput,
+           let lastUpdate = lastUpdateTime,
+           Date().timeIntervalSince(lastUpdate) > idleThreshold {
+            return .idle
+        }
+
+        return baseStatus
+    }
 }
 
 // MARK: - Daily Stats (from stats-cache.json)

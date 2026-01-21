@@ -32,17 +32,23 @@ struct SessionDot: View {
 
     @State private var isBlinking = false
 
+    private var sessionStatus: SessionStatus {
+        state?.status ?? .idle
+    }
+
     private var dotColor: Color {
-        if state?.needsPermission == true {
+        switch sessionStatus {
+        case .waitingForApproval:
             return .orange
-        } else if state?.isActive == true {
+        case .working:
             return .green
+        case .waitingForInput, .idle:
+            return .gray
         }
-        return .gray
     }
 
     private var shouldBlink: Bool {
-        state?.needsPermission == true || state?.isActive == true
+        sessionStatus.isActive
     }
 
     var body: some View {
@@ -61,8 +67,8 @@ struct SessionDot: View {
                     isBlinking = false
                 }
             }
-            .onChange(of: state?.needsPermission) { _, _ in
-                // Reset animation when permission state changes
+            .onChange(of: sessionStatus) { _, _ in
+                // Reset animation when status changes
                 if shouldBlink {
                     isBlinking = false
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
@@ -80,13 +86,7 @@ struct SessionDot: View {
         } else {
             text += " (\(session.ideName))"
         }
-        if state?.needsPermission == true {
-            text += " - Needs permission"
-        } else if state?.isActive == true {
-            text += " - Working"
-        } else {
-            text += " - Idle"
-        }
+        text += " - \(sessionStatus.displayName)"
         return text
     }
 
@@ -123,17 +123,23 @@ struct SessionDotCompact: View {
 
     @State private var isBlinking = false
 
+    private var sessionStatus: SessionStatus {
+        state?.status ?? .idle
+    }
+
     private var dotColor: Color {
-        if state?.needsPermission == true {
+        switch sessionStatus {
+        case .waitingForApproval:
             return .orange
-        } else if state?.isActive == true {
+        case .working:
             return .green
+        case .waitingForInput, .idle:
+            return .gray
         }
-        return .gray
     }
 
     private var shouldBlink: Bool {
-        state?.needsPermission == true || state?.isActive == true
+        sessionStatus.isActive
     }
 
     var body: some View {

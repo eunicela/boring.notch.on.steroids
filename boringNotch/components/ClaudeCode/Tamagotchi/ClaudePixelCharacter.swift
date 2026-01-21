@@ -6,20 +6,61 @@
 //
 
 import SwiftUI
+import Combine
 
 // MARK: - Character Mood States
 
 enum ClaudeMood {
-    case sleeping      // !isActive for 8s+
-    case idle          // !isActive, recently active
-    case working       // isActive && hasActiveTools
-    case thinking      // isThinking && !hasActiveTools
-    case waiting       // needsPermission
+    case sleeping      // SessionStatus.idle for 8s+
+    case idle          // SessionStatus.waitingForInput
+    case working       // SessionStatus.working with active tools
+    case thinking      // SessionStatus.working without active tools (generating)
+    case waiting       // SessionStatus.waitingForApproval
     case tired         // contextPercentage > 75%
     case critical      // contextPercentage > 90%
     case celebrating   // Tool just completed
 
-    /// Determine mood from ClaudeCodeState
+    /// Determine mood from SessionStatus (preferred method)
+    /// This is the state machine approach - clean and predictable
+    static func from(
+        status: SessionStatus,
+        hasActiveTools: Bool,
+        contextPercentage: Double,
+        isSleeping: Bool,
+        isCelebrating: Bool
+    ) -> ClaudeMood {
+        // Celebration takes highest priority (temporary state)
+        if isCelebrating {
+            return .celebrating
+        }
+
+        // Context warnings override operational state (health indicator)
+        if contextPercentage > 90 {
+            return .critical
+        }
+        if contextPercentage > 75 {
+            return .tired
+        }
+
+        // Map SessionStatus to visual mood
+        switch status {
+        case .waitingForApproval:
+            return .waiting
+
+        case .working:
+            // Distinguish between tool execution and thinking
+            return hasActiveTools ? .working : .thinking
+
+        case .waitingForInput:
+            return .idle
+
+        case .idle:
+            return isSleeping ? .sleeping : .idle
+        }
+    }
+
+    /// Legacy method - determine mood from boolean flags
+    /// Kept for backward compatibility during migration
     static func from(
         isActive: Bool,
         isThinking: Bool,
@@ -71,8 +112,11 @@ struct ClaudePixelCharacter: View {
     @State private var celebrateOffset: CGFloat = 0
     @State private var sweatVisible = false
     @State private var footTap = false
+    @State private var popOutOffset: CGFloat = 0  // For peek-a-boo animation
 
-    private let blinkTimer = Timer.publish(every: 3.0, on: .main, in: .common).autoconnect()
+    // Timer publisher without autoconnect - manually managed to prevent memory leaks
+    private let blinkTimer = Timer.publish(every: 3.0, on: .main, in: .common)
+    @State private var blinkTimerCancellable: Cancellable?
 
     init(mood: ClaudeMood, scale: CGFloat = 1.0) {
         self.mood = mood
@@ -95,6 +139,13 @@ struct ClaudePixelCharacter: View {
         }
         .onAppear {
             updateAnimations(for: mood)
+            // Connect the timer only when view appears
+            blinkTimerCancellable = blinkTimer.connect()
+        }
+        .onDisappear {
+            // Cancel the timer to prevent memory leaks
+            blinkTimerCancellable?.cancel()
+            blinkTimerCancellable = nil
         }
     }
 
@@ -119,7 +170,7 @@ struct ClaudePixelCharacter: View {
                 // Feet
                 feet
             }
-            .offset(y: bounceOffset + celebrateOffset)
+            .offset(y: bounceOffset + celebrateOffset + popOutOffset)
             .scaleEffect(breathScale)
         }
     }
@@ -332,6 +383,7 @@ struct ClaudePixelCharacter: View {
         celebrateOffset = 0
         sweatVisible = false
         footTap = false
+        popOutOffset = 0
 
         switch mood {
         case .sleeping:
@@ -464,28 +516,13 @@ struct ClaudePixelCharacter: View {
     }
 
     private func startCelebratingAnimation() {
-        // Quick jump
+        // Simple celebration: just show sparkles (handled by decorations)
+        // and a subtle happy bounce - no pop-up since overlay handles that
         withAnimation(
-            Animation.spring(response: 0.3, dampingFraction: 0.5)
-                .repeatCount(3, autoreverses: true)
+            Animation.easeInOut(duration: 0.3)
+                .repeatCount(4, autoreverses: true)
         ) {
-            celebrateOffset = -8
-        }
-
-        // Arm raise
-        withAnimation(
-            Animation.easeInOut(duration: 0.2)
-                .repeatCount(6, autoreverses: true)
-        ) {
-            armRotation = 30
-        }
-
-        // Return to idle after celebration
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-            withAnimation {
-                celebrateOffset = 0
-                armRotation = 0
-            }
+            bounceOffset = -2  // Subtle happy bounce
         }
     }
 }

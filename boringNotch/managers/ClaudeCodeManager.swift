@@ -39,6 +39,10 @@ final class ClaudeCodeManager: ObservableObject {
     /// Sessions currently waiting for user permission approval
     @Published private(set) var sessionsNeedingPermission: [ClaudeSession] = []
 
+    /// Whether a celebration animation is currently playing (tool completed)
+    @Published private(set) var isCelebrating: Bool = false
+    private var celebrationTimer: Timer?
+
     /// Track when we last had activity (for grace period before notch collapses)
     private var lastActivityTime: Date = Date()
     /// Grace period to keep notch visible after activity stops (seconds)
@@ -88,13 +92,16 @@ final class ClaudeCodeManager: ObservableObject {
     }()
     private var ideDir: URL { claudeDir.appendingPathComponent("ide") }
     private var projectsDir: URL { claudeDir.appendingPathComponent("projects") }
+    private var signalsDir: URL { claudeDir.appendingPathComponent("signals") }
 
     private var sessionFileWatcher: DispatchSourceFileSystemObject?
     private var ideDirWatcher: DispatchSourceFileSystemObject?
+    private var signalsWatcher: DispatchSourceFileSystemObject?
     private var sessionFileHandle: FileHandle?
     private var lastReadPosition: UInt64 = 0
 
     private var sessionScanTimer: Timer?
+    private var signalCheckTimer: Timer?
 
     /// Timer to detect when a tool is waiting for permission (no result after delay)
     private var permissionCheckTimer: Timer?
@@ -128,14 +135,20 @@ final class ClaudeCodeManager: ObservableObject {
     /// Sessions that failed to start watching (no log file yet)
     private var failedSessionIds: Set<String> = []
 
-    // MARK: - Sticky Session Tracking (for terminal sessions)
+    // MARK: - Dismissed Conversation Tracking
 
-    /// Track discovered terminal session project keys to keep them visible even when JSONL is stale
-    /// Once a terminal session is discovered, it stays visible until the process is truly gone
-    private var knownTerminalProjectKeys: Set<String> = []
+    /// Manually dismissed conversations (conversationId/UUID -> dismissTime)
+    /// Conversations stay dismissed until they have new activity after the dismiss time
+    private var dismissedConversations: [String: Date] = [:]
 
-    /// Extended timeout for known sessions before removing them (1 hour)
-    private let knownSessionTimeout: TimeInterval = 60 * 60
+    /// UserDefaults key for persisting dismissed conversations
+    private let dismissedConversationsKey = "ClaudeCodeDismissedConversations"
+
+    /// Whether there are any dismissed conversations (for UI to show "Show All" button)
+    var hasDismissedConversations: Bool {
+        !dismissedConversations.isEmpty
+    }
+
     /// Timestamps of when sessions failed - retry after interval
     private var failedSessionTimestamps: [String: Date] = [:]
     /// Retry interval for failed sessions (seconds)
@@ -144,9 +157,60 @@ final class ClaudeCodeManager: ObservableObject {
     // MARK: - Initialization
 
     private init() {
+        loadDismissedConversations()
         setupNotifications()
         startSessionScanning()
+        startSignalsWatching()
         loadDailyStats()
+    }
+
+    // MARK: - Dismissed Conversations Persistence
+
+    /// Load dismissed conversations from UserDefaults
+    private func loadDismissedConversations() {
+        if let data = UserDefaults.standard.data(forKey: dismissedConversationsKey),
+           let decoded = try? JSONDecoder().decode([String: Date].self, from: data) {
+            dismissedConversations = decoded
+            // Clean up old entries on load
+            cleanupOldDismissedConversations()
+        }
+    }
+
+    /// Remove dismissed conversation entries older than 7 days to prevent unbounded growth
+    private func cleanupOldDismissedConversations() {
+        let cutoffDate = Date().addingTimeInterval(-7 * 24 * 60 * 60) // 7 days ago
+        let oldCount = dismissedConversations.count
+        dismissedConversations = dismissedConversations.filter { $0.value > cutoffDate }
+        let removedCount = oldCount - dismissedConversations.count
+        if removedCount > 0 {
+            print("[ClaudeCode] 🧹 Cleaned up \(removedCount) old dismissed conversation entries")
+            saveDismissedConversations()
+        }
+    }
+
+    /// Save dismissed conversations to UserDefaults
+    private func saveDismissedConversations() {
+        if let encoded = try? JSONEncoder().encode(dismissedConversations) {
+            UserDefaults.standard.set(encoded, forKey: dismissedConversationsKey)
+        }
+    }
+
+    /// Dismiss a conversation (tab) from the HUD
+    /// The conversation will stay hidden until it has new activity after the dismiss time
+    func dismissConversation(_ conversation: ConversationInfo) {
+        dismissedConversations[conversation.id] = Date()
+        saveDismissedConversations()
+        print("[ClaudeCode] 👋 Dismissed conversation: \(conversation.displayTitle)")
+        // Trigger immediate rescan to update UI
+        scanConversations()
+    }
+
+    /// Show all dismissed conversations (clear the dismissed list)
+    func showAllDismissedConversations() {
+        dismissedConversations.removeAll()
+        saveDismissedConversations()
+        print("[ClaudeCode] 👁️ Showing all dismissed conversations")
+        scanConversations()
     }
 
     // Note: cleanup is handled by stopWatching() called manually or when app terminates
@@ -236,12 +300,10 @@ final class ClaudeCodeManager: ObservableObject {
         failedSessionTimestamps = failedSessionTimestamps.filter { currentSessionIds.contains($0.key) }
     }
 
-    /// Scan for terminal sessions by looking for recently modified JSONL files
+    /// Scan for terminal sessions by looking for JSONL files
     /// that don't correspond to any IDE session
     ///
-    /// Implements "sticky sessions": once a terminal session is discovered, it stays visible
-    /// until the JSONL file is very stale (1 hour) or deleted. This prevents sessions from
-    /// flickering out of the UI during periods of inactivity while Claude is still running.
+    /// Only shows sessions with activity in the last 24 hours to filter out ancient projects
     private func scanForTerminalSessions(excludingIDEWorkspaces ideWorkspaces: [String]) -> [ClaudeSession] {
         let fm = FileManager.default
         var terminalSessions: [ClaudeSession] = []
@@ -254,19 +316,14 @@ final class ClaudeCodeManager: ObservableObject {
         })
 
         guard fm.fileExists(atPath: projectsDir.path) else {
-            knownTerminalProjectKeys.removeAll()
             return []
         }
 
+        // 24-hour threshold for session activity
+        let sessionThreshold = Date().addingTimeInterval(-24 * 60 * 60)
+
         do {
             let projectDirs = try fm.contentsOfDirectory(at: projectsDir, includingPropertiesForKeys: [.contentModificationDateKey])
-
-            // Time thresholds
-            let recentThreshold = Date().addingTimeInterval(-5 * 60)  // 5 min for new discovery
-            let staleThreshold = Date().addingTimeInterval(-knownSessionTimeout)  // 1 hour for known sessions
-
-            // Track which project keys we see in this scan (for cleanup)
-            var seenProjectKeys: Set<String> = []
 
             for projectDir in projectDirs {
                 // Skip if this is an IDE session
@@ -280,48 +337,19 @@ final class ClaudeCodeManager: ObservableObject {
                     continue
                 }
 
-                seenProjectKeys.insert(projectKey)
-
                 // Check for JSONL file in this project
                 guard let mostRecentFile = findMostRecentJSONLFile(in: projectDir) else {
-                    // No JSONL file - remove from known set if it was there
-                    knownTerminalProjectKeys.remove(projectKey)
                     continue
                 }
 
                 // Get modification date
                 guard let attrs = try? fm.attributesOfItem(atPath: mostRecentFile.path),
                       let modDate = attrs[.modificationDate] as? Date else {
-                    knownTerminalProjectKeys.remove(projectKey)
                     continue
                 }
 
-                // Sticky session logic:
-                // 1. If JSONL is recent (5 min) → include and add to known set
-                // 2. Else if project key is known AND not too stale (1 hour) → include (sticky)
-                // 3. Else → skip and remove from known set
-
-                let isRecent = modDate > recentThreshold
-                let isKnown = knownTerminalProjectKeys.contains(projectKey)
-                let isNotTooStale = modDate > staleThreshold
-
-                if isRecent {
-                    // Recently active - include and track
-                    let wasKnown = knownTerminalProjectKeys.contains(projectKey)
-                    knownTerminalProjectKeys.insert(projectKey)
-                    if !wasKnown {
-                        print("[ClaudeCode] 📌 New terminal session discovered: \(projectKey)")
-                    }
-                } else if isKnown && isNotTooStale {
-                    // Known session that's not too stale - keep it visible (sticky behavior)
-                    // This is the key change: we don't filter it out just because it's > 5 min old
-                    // Note: Not logging here to avoid spam - session stays visible silently
-                } else {
-                    // Unknown and not recent, or too stale - skip
-                    if isKnown {
-                        print("[ClaudeCode] 🗑️ Removing stale session (>1h idle): \(projectKey)")
-                    }
-                    knownTerminalProjectKeys.remove(projectKey)
+                // Filter by 24-hour threshold - skip old/stale sessions
+                guard modDate > sessionThreshold else {
                     continue
                 }
 
@@ -335,9 +363,6 @@ final class ClaudeCodeManager: ObservableObject {
                 let session = ClaudeSession.terminalSession(projectKey: projectKey, workspacePath: workspacePath)
                 terminalSessions.append(session)
             }
-
-            // Clean up project keys for directories that no longer exist
-            knownTerminalProjectKeys = knownTerminalProjectKeys.intersection(seenProjectKeys)
 
         } catch {
             print("[ClaudeCode] Error scanning terminal sessions: \(error)")
@@ -393,6 +418,7 @@ final class ClaudeCodeManager: ObservableObject {
     /// Find all active JSONL files in a project directory (modified within threshold)
     /// Returns conversations sorted by last modified (most recent first)
     /// Filters by sessions-index.json to only show conversations that Claude Code considers active
+    /// Also filters out manually dismissed conversations (with auto-undismiss on new activity)
     private func findActiveJSONLFiles(in projectDir: URL, activeThreshold: TimeInterval = 20 * 60) -> [ConversationInfo] {
         let fm = FileManager.default
 
@@ -408,6 +434,7 @@ final class ClaudeCodeManager: ObservableObject {
         let recentThreshold = now.addingTimeInterval(-activeThreshold)
 
         var conversations: [ConversationInfo] = []
+        var dismissedConversationsChanged = false
 
         for file in jsonlFiles {
             guard let attrs = try? fm.attributesOfItem(atPath: file.path),
@@ -418,10 +445,17 @@ final class ClaudeCodeManager: ObservableObject {
             // Extract UUID from filename (e.g., "26cabc84-fdfa-437a-b90e-023875cffada.jsonl")
             let uuid = file.deletingPathExtension().lastPathComponent
 
-            // Only include files that are in the sessions index (if index exists)
-            // Fallback: if index is empty (doesn't exist), show all files for terminal sessions
-            guard validSessionIds.isEmpty || validSessionIds.contains(uuid) else {
-                continue
+            // Check if conversation is dismissed
+            if let dismissTime = dismissedConversations[uuid] {
+                if modDate > dismissTime {
+                    // New activity after dismiss - auto-undismiss
+                    dismissedConversations.removeValue(forKey: uuid)
+                    dismissedConversationsChanged = true
+                    print("[ClaudeCode] 🔄 Auto-undismissed conversation (new activity): \(uuid.prefix(8))")
+                } else {
+                    // Still dismissed - skip this conversation
+                    continue
+                }
             }
 
             // Read token usage and current tool from the file (quick scan of last portion)
@@ -451,6 +485,11 @@ final class ClaudeCodeManager: ObservableObject {
             conversation.isWaitingForPermission = isWaitingForPermission
 
             conversations.append(conversation)
+        }
+
+        // Save if we auto-undismissed any conversations
+        if dismissedConversationsChanged {
+            saveDismissedConversations()
         }
 
         // Sort by last modified (most recent first)
@@ -724,6 +763,10 @@ final class ClaudeCodeManager: ObservableObject {
         let fd = open(jsonlFile.path, O_EVTONLY)
         guard fd >= 0 else {
             print("Failed to open file descriptor for watching")
+            // Clean up file handle we already created
+            sessionFileHandle?.closeFile()
+            sessionFileHandle = nil
+            lastReadPosition = 0
             return
         }
 
@@ -760,7 +803,10 @@ final class ClaudeCodeManager: ObservableObject {
         sessionScanTimer = nil
         idleCheckTimer?.invalidate()
         idleCheckTimer = nil
+        signalCheckTimer?.invalidate()
+        signalCheckTimer = nil
         stopWatchingSessionFile()
+        stopSignalsWatching()
         ideDirWatcher?.cancel()
         ideDirWatcher = nil
 
@@ -768,6 +814,189 @@ final class ClaudeCodeManager: ObservableObject {
         for sessionId in sessionWatchers.keys {
             stopWatchingSession(id: sessionId)
         }
+    }
+
+    // MARK: - Signal Files Watching (Hooks Integration)
+
+    /// Start watching the signals directory for hook-generated signal files
+    /// Signal files provide instant state updates from Claude Code hooks
+    private func startSignalsWatching() {
+        let fm = FileManager.default
+
+        // Create signals directory if it doesn't exist
+        if !fm.fileExists(atPath: signalsDir.path) {
+            try? fm.createDirectory(at: signalsDir, withIntermediateDirectories: true)
+        }
+
+        // Initial read
+        readSignalFiles()
+
+        // Set up directory watcher
+        let fd = open(signalsDir.path, O_EVTONLY)
+        guard fd >= 0 else {
+            print("[ClaudeCode-Signals] Failed to open signals directory for watching")
+            // Fallback to polling
+            startSignalPolling()
+            return
+        }
+
+        let source = DispatchSource.makeFileSystemObjectSource(
+            fileDescriptor: fd,
+            eventMask: [.write, .extend, .delete, .rename],
+            queue: .main
+        )
+
+        source.setEventHandler { [weak self] in
+            self?.readSignalFiles()
+        }
+
+        source.setCancelHandler {
+            close(fd)
+        }
+
+        source.resume()
+        signalsWatcher = source
+        print("[ClaudeCode-Signals] Watching signals directory: \(signalsDir.path)")
+    }
+
+    /// Fallback to polling if directory watching fails
+    private func startSignalPolling() {
+        signalCheckTimer?.invalidate()
+        signalCheckTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.readSignalFiles()
+            }
+        }
+    }
+
+    private func stopSignalsWatching() {
+        signalsWatcher?.cancel()
+        signalsWatcher = nil
+        signalCheckTimer?.invalidate()
+        signalCheckTimer = nil
+    }
+
+    /// Read and process signal files from hooks
+    /// Signal files are now session-specific:
+    /// - {session_id}_tool_active.json: A tool is currently running in that session
+    /// - {session_id}_permission.json: A tool needs user permission in that session
+    /// - stopped.json: Claude finished responding (legacy, still supported)
+    /// - notification.json: Claude sent a notification (legacy, still supported)
+    private func readSignalFiles() {
+        let fm = FileManager.default
+
+        guard let files = try? fm.contentsOfDirectory(at: signalsDir, includingPropertiesForKeys: nil) else {
+            return
+        }
+
+        // Track which sessions have signals
+        var sessionsWithPermission: Set<String> = []
+        var sessionsWithActiveTools: Set<String> = []
+
+        for file in files {
+            let filename = file.lastPathComponent
+
+            // Parse: {session_id}_permission.json
+            if filename.hasSuffix("_permission.json") {
+                let sessionId = String(filename.dropLast("_permission.json".count))
+                sessionsWithPermission.insert(sessionId)
+
+                // Read permission file for tool name
+                if let data = fm.contents(atPath: file.path),
+                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                    let toolName = json["tool"] as? String ?? "Tool"
+
+                    // Update session state if we're tracking this session
+                    if sessionStates[sessionId] != nil {
+                        if sessionStates[sessionId]?.needsPermission != true {
+                            print("[ClaudeCode-Signals] Permission needed for session \(sessionId.prefix(8)): \(toolName)")
+                        }
+                        sessionStates[sessionId]?.needsPermission = true
+                        sessionStates[sessionId]?.pendingPermissionTool = toolName
+                        sessionStates[sessionId]?.isThinking = true
+                    }
+
+                    // Also check if this matches any conversation in the selected session
+                    if conversations.contains(where: { $0.id == sessionId }) {
+                        if !state.needsPermission {
+                            print("[ClaudeCode-Signals] Permission needed (selected session): \(toolName)")
+                        }
+                        state.needsPermission = true
+                        state.pendingPermissionTool = toolName
+                        state.isThinking = true
+                    }
+                }
+            }
+            // Parse: {session_id}_tool_active.json
+            else if filename.hasSuffix("_tool_active.json") {
+                let sessionId = String(filename.dropLast("_tool_active.json".count))
+                sessionsWithActiveTools.insert(sessionId)
+
+                // Read tool file for tool name
+                if let data = fm.contents(atPath: file.path),
+                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                    let toolName = json["tool"] as? String ?? "Tool"
+
+                    // Update session state if we're tracking this session
+                    if sessionStates[sessionId] != nil {
+                        sessionStates[sessionId]?.isThinking = true
+                        // Clear permission state since tool is actively running
+                        sessionStates[sessionId]?.needsPermission = false
+                        sessionStates[sessionId]?.pendingPermissionTool = nil
+                    }
+
+                    // Also check if this matches any conversation in the selected session
+                    if conversations.contains(where: { $0.id == sessionId }) {
+                        state.isThinking = true
+                        state.needsPermission = false
+                        state.pendingPermissionTool = nil
+                    }
+                }
+
+                // Reset idle timer since we know Claude is working
+                resetIdleTimer()
+            }
+            // Legacy: stopped.json (no session ID)
+            else if filename == "stopped.json" {
+                // Claude finished responding - will go idle after timer
+                // Delete the file after reading
+                try? fm.removeItem(at: file)
+            }
+            // Legacy: notification.json (no session ID)
+            else if filename == "notification.json" {
+                if let data = fm.contents(atPath: file.path),
+                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                   let message = json["message"] as? String {
+                    print("[ClaudeCode-Signals] Notification: \(message)")
+                }
+                // Delete after reading
+                try? fm.removeItem(at: file)
+            }
+        }
+
+        // Clear permission/active state for sessions that no longer have signal files
+        for (sessionId, _) in sessionStates {
+            if !sessionsWithPermission.contains(sessionId) && !sessionsWithActiveTools.contains(sessionId) {
+                // No signals for this session - it might be idle or permission was granted
+                // Don't clear isThinking here - let the idle timer handle that
+                // But do clear permission if no permission file exists
+                if sessionStates[sessionId]?.needsPermission == true && !sessionsWithPermission.contains(sessionId) {
+                    sessionStates[sessionId]?.needsPermission = false
+                    sessionStates[sessionId]?.pendingPermissionTool = nil
+                }
+            }
+        }
+
+        // Clear selected session's permission state if no matching signal file
+        let selectedSessionConversationIds = Set(conversations.map { $0.id })
+        let hasPermissionForSelectedSession = !sessionsWithPermission.isDisjoint(with: selectedSessionConversationIds)
+        if state.needsPermission && !hasPermissionForSelectedSession {
+            state.needsPermission = false
+            state.pendingPermissionTool = nil
+        }
+
+        // Update sessionsNeedingPermission based on signal files
+        updateSessionsNeedingPermission()
     }
 
     // MARK: - Multi-Session Watching (Permission Detection for All Sessions)
@@ -821,6 +1050,11 @@ final class ClaudeCodeManager: ObservableObject {
         let fd = open(jsonlFile.path, O_EVTONLY)
         guard fd >= 0 else {
             print("[ClaudeCode-Multi] Failed to open file descriptor for watching")
+            // Clean up the file handle and state we already created
+            sessionFileHandles[session.id]?.closeFile()
+            sessionFileHandles.removeValue(forKey: session.id)
+            sessionReadPositions.removeValue(forKey: session.id)
+            sessionStates.removeValue(forKey: session.id)
             return
         }
 
@@ -1326,6 +1560,10 @@ final class ClaudeCodeManager: ObservableObject {
                         if state.recentTools.count > 10 {
                             state.recentTools.removeLast()
                         }
+                        // Trigger celebration animation only for longer-running tools (>1s)
+                        if let duration = tool.durationMs, duration > 1000 {
+                            triggerCelebration()
+                        }
                     }
 
                     // IMPORTANT: Set isThinking=true immediately after tool completion
@@ -1393,6 +1631,21 @@ final class ClaudeCodeManager: ObservableObject {
         permissionCheckTimer = Timer.scheduledTimer(withTimeInterval: permissionCheckDelay, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.checkPendingPermissions()
+            }
+        }
+    }
+
+    /// Trigger celebration animation when a tool completes
+    func triggerCelebration() {
+        guard !isCelebrating else { return }
+
+        isCelebrating = true
+        celebrationTimer?.invalidate()
+
+        // End celebration after animation completes (2.2s for peek-a-boo)
+        celebrationTimer = Timer.scheduledTimer(withTimeInterval: 2.2, repeats: false) { [weak self] _ in
+            Task { @MainActor in
+                self?.isCelebrating = false
             }
         }
     }

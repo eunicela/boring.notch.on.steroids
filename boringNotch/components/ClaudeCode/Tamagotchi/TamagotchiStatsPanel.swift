@@ -12,8 +12,14 @@ struct TamagotchiStatsPanel: View {
     let session: ClaudeSession?
     let conversations: [ConversationInfo]
 
+    // Access to manager for dismissing sessions
+    @ObservedObject private var manager = ClaudeCodeManager.shared
+
     // Grid layout: 2 columns for conversation list
     private let maxConversationsPerColumn = 4
+
+    // Hover tooltip state
+    @State private var hoveredConversationId: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -90,11 +96,36 @@ struct TamagotchiStatsPanel: View {
 
     private func conversationRow(_ conv: ConversationInfo, index: Int) -> some View {
         HStack(spacing: 4) {
-            // Tab name (shortened title from first message)
+            // Tab name (shortened title from first message) with hover tooltip
             Text(conv.displayTitle)
                 .foregroundColor(.white.opacity(0.8))
                 .lineLimit(1)
                 .frame(width: 80, alignment: .leading)
+                .overlay(alignment: .topLeading) {
+                    if hoveredConversationId == conv.id,
+                       let fullTitle = conv.title,
+                       fullTitle.count > 20 {
+                        Text(fullTitle)
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 4)
+                            .background(
+                                RoundedRectangle(cornerRadius: 4)
+                                    .fill(Color.black.opacity(0.9))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 4)
+                                            .stroke(Color.white.opacity(0.2), lineWidth: 1)
+                                    )
+                            )
+                            .fixedSize()
+                            .offset(y: -24)
+                            .zIndex(100)
+                    }
+                }
+                .onHover { isHovering in
+                    hoveredConversationId = isHovering ? conv.id : nil
+                }
 
             // Context progress bar
             PixelProgressBar(
@@ -130,6 +161,11 @@ struct TamagotchiStatsPanel: View {
             } else {
                 Spacer()
                     .frame(width: 14)
+            }
+        }
+        .contextMenu {
+            Button("Hide Tab") {
+                manager.dismissConversation(conv)
             }
         }
     }

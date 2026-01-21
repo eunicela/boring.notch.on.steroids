@@ -27,17 +27,19 @@ struct ClaudeCodeStatsView: View {
 
                     Spacer()
 
-                    // Refresh button
-                    Button(action: { manager.scanForSessions() }) {
-                        Image(systemName: "arrow.clockwise")
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundColor(.white.opacity(0.8))
-                            .padding(4)
-                            .background(Color.white.opacity(0.15))
-                            .cornerRadius(4)
+                    // Show All Hidden button (only when there are dismissed conversations)
+                    if manager.hasDismissedConversations {
+                        Button(action: { manager.showAllDismissedConversations() }) {
+                            Image(systemName: "eye")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundColor(.white.opacity(0.8))
+                                .padding(4)
+                                .background(Color.white.opacity(0.15))
+                                .cornerRadius(4)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Show all hidden tabs")
                     }
-                    .buttonStyle(.plain)
-                    .help("Refresh sessions")
 
                     // Toggle to switch views
                     Button(action: { useTamagotchiView.toggle() }) {
@@ -130,17 +132,19 @@ struct ClaudeCodeStatsView: View {
 
                 Spacer()
 
-                // Refresh button
-                Button(action: { manager.scanForSessions() }) {
-                    Image(systemName: "arrow.clockwise")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(.white.opacity(0.8))
-                        .padding(4)
-                        .background(Color.white.opacity(0.15))
-                        .cornerRadius(4)
+                // Show All Hidden button (only when there are dismissed conversations)
+                if manager.hasDismissedConversations {
+                    Button(action: { manager.showAllDismissedConversations() }) {
+                        Image(systemName: "eye")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundColor(.white.opacity(0.8))
+                            .padding(4)
+                            .background(Color.white.opacity(0.15))
+                            .cornerRadius(4)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Show all hidden tabs")
                 }
-                .buttonStyle(.plain)
-                .help("Refresh sessions")
 
                 // Toggle to switch to Tamagotchi view
                 Button(action: { useTamagotchiView.toggle() }) {
