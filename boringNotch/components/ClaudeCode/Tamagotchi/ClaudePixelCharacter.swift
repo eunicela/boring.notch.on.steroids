@@ -146,6 +146,20 @@ struct ClaudePixelCharacter: View {
             // Cancel the timer to prevent memory leaks
             blinkTimerCancellable?.cancel()
             blinkTimerCancellable = nil
+
+            // Stop all repeating animations to prevent memory leaks
+            var transaction = Transaction()
+            transaction.animation = nil
+            withTransaction(transaction) {
+                bounceOffset = 0
+                armRotation = 0
+                breathScale = 1.0
+                eyeOffset = 0
+                celebrateOffset = 0
+                sweatVisible = false
+                footTap = false
+                popOutOffset = 0
+            }
         }
     }
 
@@ -375,15 +389,20 @@ struct ClaudePixelCharacter: View {
     }
 
     private func updateAnimations(for mood: ClaudeMood) {
-        // Stop all animations first
-        bounceOffset = 0
-        armRotation = 0
-        breathScale = 1.0
-        eyeOffset = 0
-        celebrateOffset = 0
-        sweatVisible = false
-        footTap = false
-        popOutOffset = 0
+        // Stop all animations first by resetting values without animation
+        // This is critical to prevent memory leaks from orphaned repeatForever animations
+        var transaction = Transaction()
+        transaction.animation = nil
+        withTransaction(transaction) {
+            bounceOffset = 0
+            armRotation = 0
+            breathScale = 1.0
+            eyeOffset = 0
+            celebrateOffset = 0
+            sweatVisible = false
+            footTap = false
+            popOutOffset = 0
+        }
 
         switch mood {
         case .sleeping:

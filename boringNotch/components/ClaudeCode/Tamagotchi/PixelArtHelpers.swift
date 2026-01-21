@@ -238,6 +238,15 @@ struct FloatingParticles: View {
             opacities = Array(repeating: 0.8, count: count)
             startAnimation()
         }
+        .onDisappear {
+            // Stop all repeating animations to prevent memory leaks
+            var transaction = Transaction()
+            transaction.animation = nil
+            withTransaction(transaction) {
+                offsets = Array(repeating: 0, count: count)
+                opacities = Array(repeating: 0.8, count: count)
+            }
+        }
     }
 
     private func startAnimation() {

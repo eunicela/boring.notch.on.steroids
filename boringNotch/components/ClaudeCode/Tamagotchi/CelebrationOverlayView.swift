@@ -191,14 +191,21 @@ struct CelebrationOverlayView: View {
     }
 
     private func endCelebration() {
+        // Stop all repeating animations first to prevent memory leaks
+        // Using Transaction with nil animation stops any running repeatForever animations
+        var transaction = Transaction()
+        transaction.animation = nil
+        withTransaction(transaction) {
+            armRotation = 0
+            bounceOffset = 0
+        }
+
         // Quick fade out if still visible
         withAnimation(.easeOut(duration: 0.1)) {
             isVisible = false
         }
         // Reset state
         popOutOffset = -60
-        armRotation = 0
-        bounceOffset = 0
     }
 }
 
